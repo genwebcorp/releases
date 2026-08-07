@@ -1,0 +1,32 @@
+#!/bin/sh
+# Retired GenWeb installer for inbox. Do not edit here.
+GENWEB_RELEASE_COMMAND=inbox
+export GENWEB_RELEASE_COMMAND
+# Tombstone for a retired per-command public installer.
+#
+# Rendered into genwebcorp/releases as one file per former command (for example
+# `inbox`). Old bookmarks that still curl this path must fail loudly with a
+# pointer to the genweb bootstrap — a 404 pipes empty input to `sh` and exits 0.
+#
+# The sync workflow prepends GENWEB_RELEASE_COMMAND before copying the body.
+# Do not source this file.
+
+set -eu
+
+command="${GENWEB_RELEASE_COMMAND:-}"
+if [ -z "$command" ]; then
+  printf '%s\n' "genweb: this installer has been retired." >&2
+else
+  printf '%s\n' "genweb: the \`${command}\` installer has been retired." >&2
+fi
+printf '%s\n' "" >&2
+printf '%s\n' "Install the genweb manager, then install the app with it:" >&2
+printf '%s\n' "" >&2
+printf '%s\n' "  curl -fsSL https://raw.githubusercontent.com/genwebcorp/releases/main/genweb | sh" >&2
+if [ -n "$command" ]; then
+  printf '%s\n' "  genweb install ${command}" >&2
+else
+  printf '%s\n' "  genweb install <command>" >&2
+fi
+printf '%s\n' "" >&2
+exit 1

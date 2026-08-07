@@ -1,0 +1,192 @@
+#!/bin/sh
+# Install the `genweb` application manager on a machine with no monorepo checkout.
+#
+#   curl -fsSL https://raw.githubusercontent.com/genwebcorp/releases/main/genweb | sh
+#
+# This file is public, and so is everything it downloads. That is the whole point of
+# the split: this script fetches only `genweb-bootstrap`, a helper whose sole job is
+# to verify a GenWeb account in a browser and then download the real manager from
+# `releases.dev.genweb.io`, which is gated. A stranger who runs this gets as far as a
+# Google sign-in that refuses them.
+#
+# Written in POSIX sh on purpose. Piping to `sh` ignores the shebang, so bash-isms
+# (arrays, `< <(…)`, `${var:0:n}`) would break for exactly the invocation the docs
+# advertise. Nothing here needs bash.
+#
+# Because stdin is the pipe, this script never prompts. When a prerequisite is
+# missing it prints the command to run and exits non-zero. The helper it hands off to
+# opens a browser rather than reading stdin, for the same reason.
+
+set -eu
+
+# The public repository holding the helper binaries and the version pointer.
+BOOTSTRAP_REPO="${GENWEB_BOOTSTRAP_REPO:-genwebcorp/releases}"
+BOOTSTRAP_RAW="${GENWEB_BOOTSTRAP_RAW:-https://raw.githubusercontent.com/$BOOTSTRAP_REPO/main}"
+BOOTSTRAP_DOWNLOAD="${GENWEB_BOOTSTRAP_DOWNLOAD:-https://github.com/$BOOTSTRAP_REPO/releases/download}"
+
+# A committed file naming the current helper version, rather than the GitHub API or
+# a `releases/latest` redirect. The API is rate-limited for anonymous callers, and
+# `latest` means the newest release in the whole repository, which is wrong the
+# moment anything else is published there.
+VERSION_POINTER="${GENWEB_BOOTSTRAP_VERSION_URL:-$BOOTSTRAP_RAW/genweb-bootstrap.version}"
+
+PLATFORM=""
+WORK=""
+
+log_info() {
+  printf '[INFO] %s\n' "$1"
+}
+
+log_error() {
+  printf '[ERROR] %s\n' "$1" >&2
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+cleanup() {
+  [ -n "$WORK" ] && rm -rf "$WORK"
+}
+
+detect_platform() {
+  os=""
+  arch=""
+
+  case "$(uname -s)" in
+  Darwin) os="darwin" ;;
+  Linux) os="linux" ;;
+  *)
+    log_error "Unsupported operating system: $(uname -s). GenWeb ships for macOS and Linux."
+    exit 1
+    ;;
+  esac
+
+  case "$(uname -m)" in
+  arm64 | aarch64) arch="arm64" ;;
+  x86_64 | amd64) arch="x64" ;;
+  *)
+    log_error "Unsupported architecture: $(uname -m)"
+    exit 1
+    ;;
+  esac
+
+  PLATFORM="$os-$arch"
+
+  # The MVP ships two targets. Saying which ones beats a 404 on the download.
+  case "$PLATFORM" in
+  darwin-arm64 | linux-x64) ;;
+  *)
+    log_error "No genweb build for $PLATFORM. Supported: darwin-arm64, linux-x64."
+    exit 1
+    ;;
+  esac
+
+  log_info "Detected platform: $PLATFORM"
+}
+
+sha256_of() {
+  if command_exists sha256sum; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command_exists shasum; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    log_error "Neither sha256sum nor shasum is available; cannot verify the download."
+    exit 1
+  fi
+}
+
+verify_sha256() {
+  file="$1"
+  expected="$2"
+  actual=""
+
+  actual="$(sha256_of "$file")"
+  if [ "$actual" != "$expected" ]; then
+    log_error "Checksum mismatch for $(basename "$file")"
+    log_error "  expected $expected"
+    log_error "  actual   $actual"
+    exit 1
+  fi
+}
+
+resolve_version() {
+  version=""
+
+  if [ -n "${GENWEB_BOOTSTRAP_VERSION:-}" ]; then
+    version="$GENWEB_BOOTSTRAP_VERSION"
+  else
+    version="$(curl -fsSL "$VERSION_POINTER" 2>/dev/null | head -1 | tr -d '[:space:]')" || true
+    if [ -z "$version" ]; then
+      log_error "Could not read the helper version from $VERSION_POINTER"
+      log_error "Check your network, or pin one with GENWEB_BOOTSTRAP_VERSION=1.2.3"
+      exit 1
+    fi
+  fi
+
+  # Everything downstream interpolates this into a URL, so constrain it here rather
+  # than trusting a fetched file to be well formed.
+  case "$version" in
+  *[!A-Za-z0-9.-]* | "")
+    log_error "Helper version has unexpected characters: $version"
+    exit 1
+    ;;
+  esac
+
+  printf '%s\n' "$version"
+}
+
+# Put a verified `genweb-bootstrap` at $WORK/genweb-bootstrap.
+download_helper() {
+  version="$1"
+  asset="genweb-bootstrap-$PLATFORM.tar.gz"
+  base="$BOOTSTRAP_DOWNLOAD/genweb-bootstrap/v$version"
+  expected=""
+
+  log_info "Downloading genweb-bootstrap $version for $PLATFORM"
+  if ! curl -fsSL "$base/$asset" -o "$WORK/$asset"; then
+    log_error "Could not download $base/$asset"
+    exit 1
+  fi
+  if ! curl -fsSL "$base/$asset.sha256" -o "$WORK/$asset.sha256"; then
+    log_error "Could not download the checksum for $asset; refusing to run unverified code."
+    exit 1
+  fi
+
+  expected="$(cut -d' ' -f1 <"$WORK/$asset.sha256" | tr -d '[:space:]')"
+  verify_sha256 "$WORK/$asset" "$expected"
+  log_info "Checksum verified"
+
+  tar -xzf "$WORK/$asset" -C "$WORK"
+  if [ ! -f "$WORK/genweb-bootstrap" ]; then
+    log_error "Archive did not contain genweb-bootstrap"
+    exit 1
+  fi
+  chmod +x "$WORK/genweb-bootstrap"
+}
+
+main() {
+  for tool in curl tar; do
+    if ! command_exists "$tool"; then
+      log_error "Required command not found: $tool"
+      exit 1
+    fi
+  done
+
+  WORK="$(mktemp -d "${TMPDIR:-/tmp}/genweb-bootstrap.XXXXXX")"
+  trap cleanup EXIT INT TERM
+
+  detect_platform
+  download_helper "$(resolve_version)"
+
+  # The helper takes over from here: browser verification, then the protected
+  # manager download. It runs from a temp directory that this script's trap removes,
+  # so nothing it fetched is left behind if it fails.
+  "$WORK/genweb-bootstrap" "$@"
+}
+
+# Guarded so the tests can source this file and exercise the helpers directly. POSIX
+# sh has no BASH_SOURCE, hence an explicit opt-out.
+if [ -z "${GENWEB_BOOTSTRAP_LIB_ONLY:-}" ]; then
+  main "$@"
+fi
