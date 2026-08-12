@@ -40,7 +40,8 @@ genweb logout                # revoke this machine's session
 ## Requirements
 
 - Apple Silicon macOS, or `x86_64` Linux. Intel Macs are not currently supported; the
-  installer will tell you rather than installing something that cannot run.
+  installer will tell you rather than installing something that cannot run. Any Linux
+  distribution works: the binaries are linked statically and need no particular glibc.
 - A GenWeb account. The first thing the installer does is open a browser to verify
   one; nothing downloads until it has. **The script here is public, the software it
   fetches is not.**
