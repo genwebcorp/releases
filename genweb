@@ -15,7 +15,8 @@
 #
 # Because stdin is the pipe, this script never prompts. When a prerequisite is
 # missing it prints the command to run and exits non-zero. The helper it hands off to
-# opens a browser rather than reading stdin, for the same reason.
+# inherits that same pipe, so where it does have to ask something — the authorization
+# code, on a machine with no browser — it reads /dev/tty and never stdin.
 
 set -eu
 
