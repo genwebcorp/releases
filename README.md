@@ -9,12 +9,14 @@ monorepo checkout.
 curl -fsSL https://raw.githubusercontent.com/genwebcorp/releases/main/genweb | sh
 ```
 
-That installs `genweb`, which installs and runs everything else:
+That installs `genweb` and Inbox. Then run:
 
 ```sh
-genweb install inbox
 genweb inbox
 ```
+
+To install only `genweb`, run the installer with `sh -s -- --manager-only`. Naming an
+app that is not installed, as in `genweb cogent`, installs it first.
 
 | Command | App | What it is |
 | --- | --- | --- |
